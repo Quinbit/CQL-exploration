@@ -154,6 +154,24 @@ class TanhGaussianPolicy(nn.Module):
         log_std = self.log_std_multiplier() * log_std + self.log_std_offset()
         return self.tanh_gaussian(mean, log_std, deterministic)
 
+class RandomPolicy(nn.Module):
+    def __init__(self, action_dim, bounded=False, std=1.0, mean=0.0):
+        super().__init__()
+        self.action_dim = action_dim
+        self.bounded = bounded
+        self.mean = mean
+        self.std = std
+
+    def log_prob(self, observations, actions):
+        raise NotImplementedError
+
+    def forward(self, observations, deterministic=False, repeat=None):
+        ret = torch.randn(observations.shape[:-1] + (self.action_dim,)) * self.std + self.mean
+        if self.bounded:
+            return torch.tanh(ret), None
+        else:
+            return ret, None
+    
 
 class SamplerPolicy(object):
 

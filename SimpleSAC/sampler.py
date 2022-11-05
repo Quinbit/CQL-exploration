@@ -59,7 +59,7 @@ class TrajSampler(object):
         self.max_traj_length = max_traj_length
         self._env = env
 
-    def sample(self, policy, n_trajs, deterministic=False, replay_buffer=None):
+    def sample(self, policy, n_trajs, deterministic=False, replay_buffer=None, display=False):
         trajs = []
         for _ in range(n_trajs):
             observations = []
@@ -75,6 +75,8 @@ class TrajSampler(object):
                     np.expand_dims(observation, 0), deterministic=deterministic
                 )[0, :]
                 next_observation, reward, done, _ = self.env.step(action)
+                if display:
+                    self.env.render()
                 observations.append(observation)
                 actions.append(action)
                 rewards.append(reward)

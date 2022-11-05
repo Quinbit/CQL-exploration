@@ -12,10 +12,10 @@ import d4rl
 
 import absl.app
 import absl.flags
-
+from .replay_buffer import ReplayBuffer
 from .conservative_sac import ConservativeSAC
 from .replay_buffer import batch_to_torch, get_d4rl_dataset, subsample_batch
-from .model import TanhGaussianPolicy, FullyConnectedQFunction, SamplerPolicy
+from .model import RandomPolicy, TanhGaussianPolicy, FullyConnectedQFunction, SamplerPolicy
 from .sampler import StepSampler, TrajSampler
 from .utils import Timer, define_flags_with_default, set_random_seed, print_flags, get_user_flags, prefix_metrics
 from .utils import WandBLogger
@@ -30,7 +30,7 @@ FLAGS_DEF = define_flags_with_default(
     save_model=False,
     visualize=False,
     batch_size=512,
-    dataset_size=10000,
+    dataset_size=1000000,
 
     reward_scale=1.0,
     reward_bias=0.0,
@@ -62,6 +62,18 @@ def subsample_dataset(dataset, flags):
     return new_dataset
 
 
+def sample_random_dataset(size, train_sampler, n_steps, action_dim):
+    replay_buffer = ReplayBuffer(size)
+    random_policy = SamplerPolicy(RandomPolicy(action_dim=action_dim), device='cuda')
+    while len(replay_buffer) < size:
+        train_sampler.sample(
+                    random_policy, n_steps,
+                    deterministic=False, replay_buffer=replay_buffer
+                )
+    
+    return replay_buffer.data
+
+
 def main(argv):
     FLAGS = absl.flags.FLAGS
 
@@ -79,9 +91,10 @@ def main(argv):
     set_random_seed(FLAGS.seed)
 
     eval_sampler = TrajSampler(gym.make(FLAGS.env).unwrapped, FLAGS.max_traj_length)
+    train_sampler = StepSampler(gym.make(FLAGS.env).unwrapped, FLAGS.max_traj_length)
+    
     print("Generating dataset")
-    dataset = get_d4rl_dataset(eval_sampler.env)
-    dataset = subsample_dataset(dataset, FLAGS)
+    dataset = sample_random_dataset(FLAGS.dataset_size, train_sampler, FLAGS.max_traj_length, eval_sampler.env.action_space.shape[0])
     dataset['rewards'] = dataset['rewards'] * FLAGS.reward_scale + FLAGS.reward_bias
     dataset['actions'] = np.clip(dataset['actions'], -FLAGS.clip_action, FLAGS.clip_action)
 
