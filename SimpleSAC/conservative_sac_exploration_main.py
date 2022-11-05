@@ -47,6 +47,9 @@ FLAGS_DEF = define_flags_with_default(
     n_train_step_per_epoch=1000,
     eval_period=10,
     eval_n_trajs=5,
+    
+    explore_n_epochs=10,
+    num_exploration_traj=100,
 
     cql=ConservativeSAC.get_default_config(),
     logging=WandBLogger.get_default_config(),
@@ -71,7 +74,7 @@ def sample_random_dataset(size, train_sampler, n_steps, action_dim):
                     deterministic=False, replay_buffer=replay_buffer
                 )
     
-    return replay_buffer.data
+    return replay_buffer
 
 
 def main(argv):
@@ -94,7 +97,8 @@ def main(argv):
     train_sampler = StepSampler(gym.make(FLAGS.env).unwrapped, FLAGS.max_traj_length)
     
     print("Generating dataset")
-    dataset = sample_random_dataset(FLAGS.dataset_size, train_sampler, FLAGS.max_traj_length, eval_sampler.env.action_space.shape[0])
+    replay_dataset = sample_random_dataset(FLAGS.dataset_size, train_sampler, FLAGS.max_traj_length, eval_sampler.env.action_space.shape[0])
+    dataset = replay_dataset.data
     dataset['rewards'] = dataset['rewards'] * FLAGS.reward_scale + FLAGS.reward_bias
     dataset['actions'] = np.clip(dataset['actions'], -FLAGS.clip_action, FLAGS.clip_action)
 
@@ -143,6 +147,18 @@ def main(argv):
                 batch = subsample_batch(dataset, FLAGS.batch_size)
                 batch = batch_to_torch(batch, FLAGS.device)
                 metrics.update(prefix_metrics(sac.train(batch, bc=epoch < FLAGS.bc_epochs), 'sac'))
+
+        with Timer() as explore_time:  
+            if (epoch + 1) * FLAGS.explore_n_epochs:
+                for _ in range(FLAGS.num_exploration_traj):
+                    train_sampler.sample(
+                        sampler_policy, FLAGS.n_env_steps_per_epoch,
+                        deterministic=False, replay_buffer=replay_dataset
+                    )
+                    
+                dataset = replay_dataset.data
+                dataset['rewards'] = dataset['rewards'] * FLAGS.reward_scale + FLAGS.reward_bias
+                dataset['actions'] = np.clip(dataset['actions'], -FLAGS.clip_action, FLAGS.clip_action)
 
         with Timer() as eval_timer:
             if epoch == 0 or (epoch + 1) % FLAGS.eval_period == 0:
