@@ -28,7 +28,7 @@ FLAGS_DEF = define_flags_with_default(
     seed=42,
     device='cuda',
     save_model=False,
-    visualize=False,
+    visualize=True,
     batch_size=512,
     dataset_size=1000000,
 
@@ -97,7 +97,7 @@ def main(argv):
     train_sampler = StepSampler(gym.make(FLAGS.env).unwrapped, FLAGS.max_traj_length)
     
     print("Generating dataset")
-    replay_dataset = sample_random_dataset(FLAGS.dataset_size, train_sampler, FLAGS.max_traj_length, eval_sampler.env.action_space.shape[0])
+    replay_dataset = sample_random_dataset(int(0.1 * FLAGS.dataset_size), train_sampler, FLAGS.max_traj_length, eval_sampler.env.action_space.shape[0])
     dataset = replay_dataset.data
     dataset['rewards'] = dataset['rewards'] * FLAGS.reward_scale + FLAGS.reward_bias
     dataset['actions'] = np.clip(dataset['actions'], -FLAGS.clip_action, FLAGS.clip_action)
@@ -143,16 +143,18 @@ def main(argv):
 
         print(f"training epoch {epoch}")
         with Timer() as train_timer:
+            print("Running Training")
             for batch_idx in range(FLAGS.n_train_step_per_epoch):
                 batch = subsample_batch(dataset, FLAGS.batch_size)
                 batch = batch_to_torch(batch, FLAGS.device)
                 metrics.update(prefix_metrics(sac.train(batch, bc=epoch < FLAGS.bc_epochs), 'sac'))
 
         with Timer() as explore_time:  
+            print("Run exploration")
             if (epoch + 1) * FLAGS.explore_n_epochs:
                 for _ in range(FLAGS.num_exploration_traj):
                     train_sampler.sample(
-                        sampler_policy, FLAGS.n_env_steps_per_epoch,
+                        sampler_policy, FLAGS.max_traj_length,
                         deterministic=False, replay_buffer=replay_dataset
                     )
                     
@@ -167,9 +169,11 @@ def main(argv):
                 )
                 
                 if FLAGS.visualize:
+                    print("Visualizing....")
                     _ = eval_sampler.sample(
                         sampler_policy, 1, deterministic=True, display=True
                     )
+                    print("Done Visualizing")
 
                 metrics['average_return'] = np.mean([np.sum(t['rewards']) for t in trajs])
                 metrics['average_traj_length'] = np.mean([len(t['rewards']) for t in trajs])
