@@ -24,7 +24,7 @@ from viskit.logging import logger, setup_logger
 
 FLAGS_DEF = define_flags_with_default(
     env='halfcheetah-medium-v2',
-    max_traj_length=200,
+    max_traj_length=1000,
     seed=42,
     device='cuda',
     save_model=False,
