@@ -41,12 +41,13 @@ def multiple_action_q_function(forward):
 
 class FullyConnectedNetwork(nn.Module):
 
-    def __init__(self, input_dim, output_dim, arch='256-256', orthogonal_init=False):
+    def __init__(self, input_dim, output_dim, arch='256-256', orthogonal_init=False, p=0.0):
         super().__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.arch = arch
         self.orthogonal_init = orthogonal_init
+        self.p = p
 
         d = input_dim
         modules = []
@@ -57,6 +58,8 @@ class FullyConnectedNetwork(nn.Module):
             if orthogonal_init:
                 nn.init.orthogonal_(fc.weight, gain=np.sqrt(2))
                 nn.init.constant_(fc.bias, 0.0)
+            if self.p > 0:
+                modules.append(nn.Dropout(p=self.p))
             modules.append(fc)
             modules.append(nn.ReLU())
             d = hidden_size
@@ -191,14 +194,14 @@ class SamplerPolicy(object):
 
 class FullyConnectedQFunction(nn.Module):
 
-    def __init__(self, observation_dim, action_dim, arch='256-256', orthogonal_init=False):
+    def __init__(self, observation_dim, action_dim, arch='256-256', orthogonal_init=False, p=0.0):
         super().__init__()
         self.observation_dim = observation_dim
         self.action_dim = action_dim
         self.arch = arch
         self.orthogonal_init = orthogonal_init
         self.network = FullyConnectedNetwork(
-            observation_dim + action_dim, 1, arch, orthogonal_init
+            observation_dim + action_dim, 1, arch, orthogonal_init, p
         )
 
     @multiple_action_q_function
