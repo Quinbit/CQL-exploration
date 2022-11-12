@@ -26,7 +26,7 @@ FLAGS_DEF = define_flags_with_default(
     env='halfcheetah-medium-v2',
     max_traj_length=1000,
     seed=42,
-    device='mps',
+    device='cuda',
     save_model=False,
     visualize=True,
     batch_size=512,
@@ -67,7 +67,7 @@ def subsample_dataset(dataset, flags):
 
 def sample_random_dataset(size, train_sampler, n_steps, action_dim):
     replay_buffer = ReplayBuffer(size)
-    random_policy = SamplerPolicy(RandomPolicy(action_dim=action_dim), device='mps')
+    random_policy = SamplerPolicy(RandomPolicy(action_dim=action_dim), device='cuda')
     while len(replay_buffer) < size:
         train_sampler.sample(
                     random_policy, n_steps,
@@ -119,7 +119,7 @@ def main(argv):
         train_sampler = EnsembleSampler(gym.make(FLAGS.env).unwrapped, FLAGS.max_traj_length, qf1, qf2, FLAGS.device)
     else:
         train_sampler = OurSampler(gym.make(FLAGS.env).unwrapped, FLAGS.max_traj_length, qf1, qf2, FLAGS.device) # was StepSampler before
-    
+    train_sampler = StepSampler(gym.make(FLAGS.env).unwrapped, FLAGS.max_traj_length) 
     print("Generating dataset")
     replay_dataset = sample_random_dataset(int(0.1 * FLAGS.dataset_size), train_sampler, FLAGS.max_traj_length, eval_sampler.env.action_space.shape[0])
     dataset = replay_dataset.data
@@ -177,7 +177,7 @@ def main(argv):
                     sampler_policy, FLAGS.eval_n_trajs, deterministic=True
                 )
                 
-                if FLAGS.visualize:
+                if False: #FLAGS.visualize:
                     print("Visualizing....")
                     _ = eval_sampler.sample(
                         sampler_policy, 1, deterministic=True, display=True
@@ -186,9 +186,9 @@ def main(argv):
 
                 metrics['average_return'] = np.mean([np.sum(t['rewards']) for t in trajs])
                 metrics['average_traj_length'] = np.mean([len(t['rewards']) for t in trajs])
-                metrics['average_normalizd_return'] = np.mean(
-                    [eval_sampler.env.get_normalized_score(np.sum(t['rewards'])) for t in trajs]
-                )
+                # metrics['average_normalizd_return'] = np.mean(
+                #     [eval_sampler.env.get_normalized_score(np.sum(t['rewards'])) for t in trajs]
+                # )
                 if FLAGS.save_model:
                     save_data = {'sac': sac, 'variant': variant, 'epoch': epoch}
                     wandb_logger.save_pickle(save_data, 'model.pkl')

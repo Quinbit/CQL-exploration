@@ -154,7 +154,6 @@ class EnsembleSampler(object):
 
             observation_tensor = torch.tensor(observation, dtype=torch.float32, device=self.device)
             action_tensor = torch.tensor(action, dtype=torch.float32, device=self.device)
-
             action_q_ensemble_vals = []
             for i in range(10):
                 qf1_vals = self.qf1(observation_tensor, action_tensor)
