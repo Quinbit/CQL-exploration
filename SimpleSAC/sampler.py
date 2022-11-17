@@ -62,6 +62,9 @@ class OurSampler(object):
         self.qf1 = qf1
         self.qf2 = qf2
         self.device = device
+        self.n_samples = 10
+        self.n_ensemble_samples = 10
+        self.std = 0.1
 
     def sample(self, policy, n_steps, deterministic=False, replay_buffer=None):
         observations = []
@@ -81,11 +84,19 @@ class OurSampler(object):
 
             observation_tensor = torch.tensor(observation, dtype=torch.float32, device=self.device)
             action_tensor = torch.tensor(action, dtype=torch.float32, device=self.device)
-            qf1_vals = self.qf1(observation_tensor, action_tensor)
-            qf2_vals = self.qf2(observation_tensor, action_tensor)
-            action_q_diff = torch.abs(qf1_vals - qf2_vals)
+            
+            next_action = torch.zeros_like(action_tensor)
+            max_diff = 0
+            for _ in range(self.n_samples):
+                new_action = action_tensor + torch.randn(action_tensor.shape, device=action_tensor.device) * self.std
+                qf1_vals = self.qf1(observation_tensor, new_action)
+                qf2_vals = self.qf2(observation_tensor, new_action)
+                action_q_diff = torch.abs(qf1_vals - qf2_vals)
+                if action_q_diff > max_diff:
+                    max_diff = action_q_diff
+                    next_action = new_action
 
-            next_observation, reward, done, _ = self.env.step(action)
+            next_observation, reward, done, _ = self.env.step(next_action.detach().cpu().numpy())
 
             observations.append(observation)
             actions.append(action)
@@ -112,12 +123,6 @@ class OurSampler(object):
             next_observations=np.array(next_observations, dtype=np.float32),
             dones=np.array(dones, dtype=np.float32),
         )
-        action_q_diffs = np.array(action_q_diffs)
-        indices = np.argsort(action_q_diffs)
-        k = len(actions) // 10 # take ~10 %
-        top_k_indices = indices[-1 * k :]
-        for k in d.keys():
-            d[k] = d[k][top_k_indices]
         return d
 
     @property
@@ -135,6 +140,8 @@ class EnsembleSampler(object):
         self.qf1 = qf1
         self.qf2 = qf2
         self.device = device
+        self.n_samples = 10
+        self.dropout = 0.2
 
     def sample(self, policy, n_steps, deterministic=False, replay_buffer=None):
         observations = []
@@ -189,12 +196,6 @@ class EnsembleSampler(object):
             next_observations=np.array(next_observations, dtype=np.float32),
             dones=np.array(dones, dtype=np.float32),
         )
-        action_q_ensembles = np.array(action_q_ensembles)
-        indices = np.argsort(action_q_ensembles)
-        k = len(actions) // 10 # take ~10 %
-        top_k_indices = indices[-1 * k :]
-        for k in d.keys():
-            d[k] = d[k][top_k_indices]
         return d
 
     @property
