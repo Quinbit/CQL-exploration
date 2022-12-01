@@ -12,11 +12,11 @@ import d4rl
 
 import absl.app
 import absl.flags
-from .replay_buffer import ReplayBuffer
+
 from .conservative_sac import ConservativeSAC
-from .replay_buffer import batch_to_torch, get_d4rl_dataset, subsample_batch
-from .model import RandomPolicy, TanhGaussianPolicy, FullyConnectedQFunction, SamplerPolicy
-from .sampler import StepSampler, TrajSampler, OurSampler, EnsembleSampler
+from .replay_buffer import ReplayBuffer, batch_to_torch, get_d4rl_dataset, subsample_batch
+from .model import TanhGaussianPolicy, FullyConnectedQFunction, SamplerPolicy
+from .sampler import StepSampler, TrajSampler
 from .utils import Timer, define_flags_with_default, set_random_seed, print_flags, get_user_flags, prefix_metrics
 from .utils import WandBLogger
 from viskit.logging import logger, setup_logger
@@ -25,12 +25,15 @@ from viskit.logging import logger, setup_logger
 FLAGS_DEF = define_flags_with_default(
     env='halfcheetah-medium-v2',
     max_traj_length=1000,
+    replay_buffer_size=1000000,
     seed=42,
-    device='mps',
+    device='cuda',
     save_model=False,
     visualize=False,
     batch_size=512,
-    dataset_size=1000000,
+    dataset_size=10000,
+    explore_n_epochs=10,
+    num_exploration_traj=10,
 
     reward_scale=1.0,
     reward_bias=0.0,
@@ -42,14 +45,11 @@ FLAGS_DEF = define_flags_with_default(
     policy_log_std_multiplier=1.0,
     policy_log_std_offset=-1.0,
 
-    n_epochs=2000,
+    n_epochs=1000,
     bc_epochs=0,
     n_train_step_per_epoch=1000,
     eval_period=10,
     eval_n_trajs=5,
-    
-    explore_n_epochs=10,
-    num_exploration_traj=100,
 
     cql=ConservativeSAC.get_default_config(),
     logging=WandBLogger.get_default_config(),
@@ -63,18 +63,6 @@ def subsample_dataset(dataset, flags):
         new_dataset[key] = item[:flags.dataset_size]
         
     return new_dataset
-
-
-def sample_random_dataset(size, train_sampler, n_steps, action_dim):
-    replay_buffer = ReplayBuffer(size)
-    random_policy = SamplerPolicy(RandomPolicy(action_dim=action_dim), device='mps')
-    while len(replay_buffer) < size:
-        train_sampler.sample(
-                    random_policy, n_steps,
-                    deterministic=False, replay_buffer=replay_buffer
-                )
-    
-    return replay_buffer
 
 
 def main(argv):
@@ -94,37 +82,16 @@ def main(argv):
     set_random_seed(FLAGS.seed)
 
     eval_sampler = TrajSampler(gym.make(FLAGS.env).unwrapped, FLAGS.max_traj_length)
-
-    dropout_prob = 0.2
-
-    qf1 = FullyConnectedQFunction(
-        eval_sampler.env.observation_space.shape[0],
-        eval_sampler.env.action_space.shape[0],
-        arch=FLAGS.qf_arch,
-        orthogonal_init=FLAGS.orthogonal_init,
-        p=dropout_prob
-    )
-    target_qf1 = deepcopy(qf1)
-
-    qf2 = FullyConnectedQFunction(
-        eval_sampler.env.observation_space.shape[0],
-        eval_sampler.env.action_space.shape[0],
-        arch=FLAGS.qf_arch,
-        orthogonal_init=FLAGS.orthogonal_init,
-        p=dropout_prob
-    )
-    target_qf2 = deepcopy(qf2)
-
-    if dropout_prob > 0:
-        train_sampler = EnsembleSampler(gym.make(FLAGS.env).unwrapped, FLAGS.max_traj_length, qf1, qf2, FLAGS.device)
-    else:
-        train_sampler = OurSampler(gym.make(FLAGS.env).unwrapped, FLAGS.max_traj_length, qf1, qf2, FLAGS.device) # was StepSampler before
-    train_sampler = StepSampler(gym.make(FLAGS.env).unwrapped, FLAGS.max_traj_length) 
     print("Generating dataset")
-    replay_dataset = sample_random_dataset(int(0.1 * FLAGS.dataset_size), train_sampler, FLAGS.max_traj_length, eval_sampler.env.action_space.shape[0])
-    dataset = replay_dataset.data
+    dataset = get_d4rl_dataset(eval_sampler.env)
+    dataset = subsample_dataset(dataset, FLAGS)
+    
+    replay_buffer = ReplayBuffer(FLAGS.replay_buffer_size)
+    
     dataset['rewards'] = dataset['rewards'] * FLAGS.reward_scale + FLAGS.reward_bias
     dataset['actions'] = np.clip(dataset['actions'], -FLAGS.clip_action, FLAGS.clip_action)
+
+    replay_buffer.add_batch(dataset)
 
     print("Creating policies")
     policy = TanhGaussianPolicy(
@@ -136,12 +103,29 @@ def main(argv):
         orthogonal_init=FLAGS.orthogonal_init,
     )
 
+    qf1 = FullyConnectedQFunction(
+        eval_sampler.env.observation_space.shape[0],
+        eval_sampler.env.action_space.shape[0],
+        arch=FLAGS.qf_arch,
+        orthogonal_init=FLAGS.orthogonal_init,
+    )
+    target_qf1 = deepcopy(qf1)
+
+    qf2 = FullyConnectedQFunction(
+        eval_sampler.env.observation_space.shape[0],
+        eval_sampler.env.action_space.shape[0],
+        arch=FLAGS.qf_arch,
+        orthogonal_init=FLAGS.orthogonal_init,
+    )
+    target_qf2 = deepcopy(qf2)
 
     if FLAGS.cql.target_entropy >= 0.0:
         FLAGS.cql.target_entropy = -np.prod(eval_sampler.env.action_space.shape).item()
 
     sac = ConservativeSAC(FLAGS.cql, policy, qf1, qf2, target_qf1, target_qf2)
     sac.torch_to_device(FLAGS.device)
+    
+    train_sampler = StepSampler(gym.make(FLAGS.env).unwrapped, FLAGS.max_traj_length)
 
     sampler_policy = SamplerPolicy(policy, FLAGS.device)
 
@@ -152,7 +136,6 @@ def main(argv):
 
         print(f"training epoch {epoch}")
         with Timer() as train_timer:
-            print("Running Training")
             for batch_idx in range(FLAGS.n_train_step_per_epoch):
                 batch = subsample_batch(dataset, FLAGS.batch_size)
                 batch = batch_to_torch(batch, FLAGS.device)
@@ -164,12 +147,13 @@ def main(argv):
                 for _ in range(FLAGS.num_exploration_traj):
                     train_sampler.sample(
                         sampler_policy, FLAGS.max_traj_length,
-                        deterministic=False, replay_buffer=replay_dataset
+                        deterministic=False, replay_buffer=replay_buffer
                     )
                     
-                dataset = replay_dataset.data
+                dataset = replay_buffer.data
                 dataset['rewards'] = dataset['rewards'] * FLAGS.reward_scale + FLAGS.reward_bias
                 dataset['actions'] = np.clip(dataset['actions'], -FLAGS.clip_action, FLAGS.clip_action)
+
 
         with Timer() as eval_timer:
             if epoch == 0 or (epoch + 1) % FLAGS.eval_period == 0:
@@ -177,12 +161,10 @@ def main(argv):
                     sampler_policy, FLAGS.eval_n_trajs, deterministic=True
                 )
                 
-                if False: #FLAGS.visualize:
-                    print("Visualizing....")
+                if FLAGS.visualize:
                     _ = eval_sampler.sample(
                         sampler_policy, 1, deterministic=True, display=True
                     )
-                    print("Done Visualizing")
 
                 metrics['average_return'] = np.mean([np.sum(t['rewards']) for t in trajs])
                 metrics['average_traj_length'] = np.mean([len(t['rewards']) for t in trajs])
