@@ -16,7 +16,7 @@ import absl.flags
 from .conservative_sac import ConservativeSAC
 from .replay_buffer import ReplayBuffer, batch_to_torch, get_d4rl_dataset, subsample_batch
 from .model import TanhGaussianPolicy, FullyConnectedQFunction, SamplerPolicy
-from .sampler import EnsembleSampler, OurSampler, StepSampler, TrajSampler
+from .sampler import EnsembleSampler, OAC, StepSampler, TrajSampler
 from .utils import Timer, define_flags_with_default, set_random_seed, print_flags, get_user_flags, prefix_metrics
 from .utils import WandBLogger
 from viskit.logging import logger, setup_logger
@@ -29,7 +29,7 @@ FLAGS_DEF = define_flags_with_default(
     seed=42,
     device='cuda',
     save_model=False,
-    visualize=True,
+    visualize=False,
     batch_size=512,
     dataset_size=10000,
     explore_n_epochs=10,
@@ -108,6 +108,7 @@ def main(argv):
         eval_sampler.env.action_space.shape[0],
         arch=FLAGS.qf_arch,
         orthogonal_init=FLAGS.orthogonal_init,
+        p=0.25
     )
     target_qf1 = deepcopy(qf1)
 
@@ -116,6 +117,7 @@ def main(argv):
         eval_sampler.env.action_space.shape[0],
         arch=FLAGS.qf_arch,
         orthogonal_init=FLAGS.orthogonal_init,
+        p=0.25
     )
     target_qf2 = deepcopy(qf2)
 

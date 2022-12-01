@@ -16,7 +16,7 @@ import absl.flags
 from .conservative_sac import ConservativeSAC
 from .replay_buffer import ReplayBuffer, batch_to_torch, get_d4rl_dataset, subsample_batch
 from .model import TanhGaussianPolicy, FullyConnectedQFunction, SamplerPolicy
-from .sampler import EnsembleSampler, OAC, StepSampler, TrajSampler
+from .sampler import EnsembleSampler, OAC, StepSampler, TrajSampler, OurSampler
 from .utils import Timer, define_flags_with_default, set_random_seed, print_flags, get_user_flags, prefix_metrics
 from .utils import WandBLogger
 from viskit.logging import logger, setup_logger
@@ -45,7 +45,7 @@ FLAGS_DEF = define_flags_with_default(
     policy_log_std_multiplier=1.0,
     policy_log_std_offset=-1.0,
 
-    n_epochs=2000,
+    n_epochs=500,
     bc_epochs=0,
     n_train_step_per_epoch=1000,
     eval_period=10,
@@ -102,6 +102,15 @@ def main(argv):
         log_std_offset=FLAGS.policy_log_std_offset,
         orthogonal_init=FLAGS.orthogonal_init,
     )
+    
+    basic_policy = TanhGaussianPolicy(
+        eval_sampler.env.observation_space.shape[0],
+        eval_sampler.env.action_space.shape[0],
+        arch=FLAGS.policy_arch,
+        log_std_multiplier=FLAGS.policy_log_std_multiplier,
+        log_std_offset=FLAGS.policy_log_std_offset,
+        orthogonal_init=FLAGS.orthogonal_init,
+    )
 
     qf1 = FullyConnectedQFunction(
         eval_sampler.env.observation_space.shape[0],
@@ -118,6 +127,22 @@ def main(argv):
         orthogonal_init=FLAGS.orthogonal_init,
     )
     target_qf2 = deepcopy(qf2)
+    
+    qf3 = FullyConnectedQFunction(
+        eval_sampler.env.observation_space.shape[0],
+        eval_sampler.env.action_space.shape[0],
+        arch=FLAGS.qf_arch,
+        orthogonal_init=FLAGS.orthogonal_init,
+    )
+    target_qf3 = deepcopy(qf3)
+
+    qf4 = FullyConnectedQFunction(
+        eval_sampler.env.observation_space.shape[0],
+        eval_sampler.env.action_space.shape[0],
+        arch=FLAGS.qf_arch,
+        orthogonal_init=FLAGS.orthogonal_init,
+    )
+    target_qf4 = deepcopy(qf4)
 
     if FLAGS.cql.target_entropy >= 0.0:
         FLAGS.cql.target_entropy = -np.prod(eval_sampler.env.action_space.shape).item()
@@ -125,7 +150,13 @@ def main(argv):
     sac = ConservativeSAC(FLAGS.cql, policy, qf1, qf2, target_qf1, target_qf2)
     sac.torch_to_device(FLAGS.device)
     
-    train_sampler = OAC(gym.make(FLAGS.env).unwrapped, FLAGS.max_traj_length, qf1, qf2, FLAGS.device)
+    copy_flags = ConservativeSAC.get_default_config()
+    copy_flags.alpha_multiplier = 0.0
+    copy_flags.use_automatic_entropy_tuning = False
+    basic_q = ConservativeSAC(copy_flags, basic_policy, qf3, qf4, target_qf3, target_qf4)
+    basic_q.torch_to_device(FLAGS.device)
+    
+    train_sampler = OurSampler(gym.make(FLAGS.env).unwrapped, FLAGS.max_traj_length, qf1, qf2, qf3, qf4, FLAGS.device)
     sampler_policy = SamplerPolicy(policy, FLAGS.device)
 
     viskit_metrics = {}
@@ -139,6 +170,7 @@ def main(argv):
                 batch = subsample_batch(dataset, FLAGS.batch_size)
                 batch = batch_to_torch(batch, FLAGS.device)
                 metrics.update(prefix_metrics(sac.train(batch, bc=epoch < FLAGS.bc_epochs), 'sac'))
+                metrics.update(prefix_metrics(basic_q.train(batch, bc=epoch < FLAGS.bc_epochs), 'basic_q'))
 
         with Timer() as explore_time:  
             print("Run exploration")
