@@ -225,7 +225,8 @@ class CQLUnexploredSampler(object):
         self.n_ensemble_samples = 10
         self.std = 0.1
         self.state_action_history = None
-        self.max_history_length = 10000
+        self.num_history_samples = 1000 # can tune this up if needed
+        self.enable_low_Q_values = True
 
     def sample(self, policy, n_steps, deterministic=False, replay_buffer=None):
         observations = []
@@ -260,7 +261,13 @@ class CQLUnexploredSampler(object):
                     self.state_action_history = np.concatenate((observation, action)).reshape(1, -1)
 
                 # dist to existing state/action clusters - if dist is large then it's more unexplored
-                action_q_diff = np.min(np.linalg.norm(self.state_action_history - np.tile(state_action_new_vec, len(self.state_action_history)).reshape(len(self.state_action_history), -1), axis=1))
+                rand_indices = torch.randperm(len(self.state_action_history))[:self.num_history_samples]
+                curr_state_actions = self.state_action_history[rand_indices]
+                action_q_diff = np.min(np.linalg.norm(curr_state_actions - np.tile(state_action_new_vec, len(curr_state_actions)).reshape(len(curr_state_actions), -1), axis=1))
+                
+                if self.enable_low_Q_values:
+                    action_q_diff = action_q_diff * -1 * min(qf1_vals.item(), qf2_vals.item())
+                
                 if action_q_diff > max_diff:
                     max_diff = action_q_diff
                     next_action = new_action
@@ -268,8 +275,6 @@ class CQLUnexploredSampler(object):
             next_observation, reward, done, _ = self.env.step(next_action.detach().cpu().numpy())
 
             self.state_action_history = np.concatenate((self.state_action_history, np.concatenate((next_observation, next_action)).reshape(1, -1)))
-            if len(self.state_action_history) > self.max_history_length:
-                self.state_action_history = self.state_action_history[len(self.state_action_history) - self.max_history_length:]
 
             observations.append(observation)
             actions.append(action)
