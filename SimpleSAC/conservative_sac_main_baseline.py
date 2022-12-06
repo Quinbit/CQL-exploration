@@ -29,7 +29,7 @@ FLAGS_DEF = define_flags_with_default(
     seed=42,
     device='cuda',
     save_model=False,
-    visualize=False,
+    visualize=True,
     batch_size=512,
     dataset_size=10000,
     explore_n_epochs=10,
@@ -48,7 +48,7 @@ FLAGS_DEF = define_flags_with_default(
     n_epochs=1000,
     bc_epochs=0,
     n_train_step_per_epoch=1000,
-    eval_period=10,
+    eval_period=100,
     eval_n_trajs=5,
 
     cql=ConservativeSAC.get_default_config(),
@@ -143,7 +143,7 @@ def main(argv):
 
         with Timer() as explore_time:  
             print("Run exploration")
-            if (epoch + 1) * FLAGS.explore_n_epochs:
+            if (epoch + 1) % FLAGS.explore_n_epochs == 0:
                 for _ in range(FLAGS.num_exploration_traj):
                     train_sampler.sample(
                         sampler_policy, FLAGS.max_traj_length,
@@ -156,12 +156,14 @@ def main(argv):
 
 
         with Timer() as eval_timer:
-            if epoch == 0 or (epoch + 1) % FLAGS.eval_period == 0:
+            if epoch == 0 or (epoch + 1) % FLAGS.eval_period == 0 or epoch > 100:
                 trajs = eval_sampler.sample(
                     sampler_policy, FLAGS.eval_n_trajs, deterministic=True
                 )
                 
                 if FLAGS.visualize:
+                    print("About to visualize!")
+                    input()
                     _ = eval_sampler.sample(
                         sampler_policy, 1, deterministic=True, display=True
                     )

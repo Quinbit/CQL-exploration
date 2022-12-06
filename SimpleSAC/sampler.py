@@ -226,7 +226,7 @@ class CQLUnexploredSampler(object):
         self.std = 0.1
         self.state_action_history = None
         self.num_history_samples = 1000 # can tune this up if needed
-        self.enable_low_Q_values = True
+        self.enable_low_Q_values = False
 
     def sample(self, policy, n_steps, deterministic=False, replay_buffer=None):
         observations = []
@@ -256,7 +256,7 @@ class CQLUnexploredSampler(object):
 
                 new_observation, _, _, _ = self.env.step(new_action.detach().cpu().numpy())
 
-                state_action_new_vec = np.concatenate((new_observation, new_action)).reshape(1, -1)
+                state_action_new_vec = np.concatenate((new_observation, new_action.cpu())).reshape(1, -1)
                 if self.state_action_history is None:
                     self.state_action_history = np.concatenate((observation, action)).reshape(1, -1)
 
@@ -274,7 +274,7 @@ class CQLUnexploredSampler(object):
 
             next_observation, reward, done, _ = self.env.step(next_action.detach().cpu().numpy())
 
-            self.state_action_history = np.concatenate((self.state_action_history, np.concatenate((next_observation, next_action)).reshape(1, -1)))
+            self.state_action_history = np.concatenate((self.state_action_history, np.concatenate((next_observation, next_action.cpu())).reshape(1, -1)))
 
             observations.append(observation)
             actions.append(action)

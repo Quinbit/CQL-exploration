@@ -142,7 +142,7 @@ def main(argv):
 
         with Timer() as explore_time:  
             print("Run exploration")
-            if (epoch + 1) * FLAGS.explore_n_epochs:
+            if (epoch + 1) % FLAGS.explore_n_epochs == 0:
                 for _ in range(FLAGS.num_exploration_traj):
                     train_sampler.sample(
                         sampler_policy, FLAGS.max_traj_length,
